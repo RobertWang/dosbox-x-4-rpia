@@ -1,4 +1,4 @@
-name: Build DOSBox-X for Alpine ARMv6 (3.12)
+name: Build DOSBox-X for Alpine ARMv6 (3.12 Final)
 
 on:
   push:
@@ -32,8 +32,9 @@ jobs:
         run: |
           cat <<EOF > Dockerfile
           FROM alpine:3.12
-          # 主人，注意这里：3.12 已 EOL，需指向 archive 源，且使用 http 协议
-          RUN sed -i 's/http:\/\/dl-cdn.alpinelinux.org\/alpine\/v3.12/http:\/\/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.12/g' /etc/apk/repositories
+          # 主人，注意这里：直接覆盖写入归档源，避免 sed 替换失败
+          RUN echo "http://dl-cdn.alpinelinux.org/alpine/archive/v3.12/main" > /etc/apk/repositories && \
+              echo "http://dl-cdn.alpinelinux.org/alpine/archive/v3.12/community" >> /etc/apk/repositories
           RUN apk update && apk add --no-cache \
             git g++ make cmake pkgconf \
             sdl2-dev libpng-dev libjpeg-turbo-dev \
@@ -48,7 +49,7 @@ jobs:
               make install DESTDIR=/pkg
           EOF
           echo "Dockerfile created:"
-          ls -la Dockerfile
+          cat Dockerfile
 
       - name: Build using Docker Buildx
         run: |
@@ -68,10 +69,11 @@ jobs:
           #!/bin/sh
           echo "=========================================="
           echo "DOSBox-X Runtime Dependency Installer"
-          echo "Target: Alpine 3.12 ARMv6 (Last Supported)"
+          echo "Target: Alpine 3.12 ARMv6 (Final Support)"
           echo "=========================================="
-          # 用户端也需要修复源
-          sed -i 's/http:\/\/dl-cdn.alpinelinux.org\/alpine\/v3.12/http:\/\/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.12/g' /etc/apk/repositories
+          # 用户端也强制覆盖源
+          echo "http://dl-cdn.alpinelinux.org/alpine/archive/v3.12/main" > /etc/apk/repositories
+          echo "http://dl-cdn.alpinelinux.org/alpine/archive/v3.12/community" >> /etc/apk/repositories
           apk update
           echo "Installing runtime libraries..."
           apk add --no-cache \

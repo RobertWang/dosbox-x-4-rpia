@@ -47,12 +47,11 @@ jobs:
           WORKDIR /src
           COPY . .
           
-          # 主人，注意这里：设置正确的环境变量和 host 参数
-          ENV PKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabi/pkgconfig:/usr/lib/pkgconfig
-          ENV SDL2_CONFIG=/usr/bin/sdl2-config
-          
-          # 先验证 pkg-config 能否找到 SDL2
-          RUN pkg-config --libs --cflags sdl2 && \
+          # 主人，注意这里：显式获取 SDL2 参数并传递给 configure
+          RUN export SDL2_CFLAGS=\$(sdl2-config --cflags) && \
+              export SDL2_LIBS=\$(sdl2-config --libs) && \
+              echo "SDL2_CFLAGS: \$SDL2_CFLAGS" && \
+              echo "SDL2_LIBS: \$SDL2_LIBS" && \
               if [ -f "./autogen.sh" ]; then \
                 chmod +x ./autogen.sh && ./autogen.sh; \
               elif [ -f "./buildconf" ]; then \
@@ -60,7 +59,7 @@ jobs:
               else \
                 echo "No buildconf script found, assuming configure exists"; \
               fi && \
-              ./configure --host=arm-linux-gnueabi --prefix=/usr/local --disable-sdl2-test --disable-opengl && \
+              ./configure --prefix=/usr/local --disable-sdl2-test --disable-opengl && \
               make -j1 && \
               make install DESTDIR=/pkg
           EOF

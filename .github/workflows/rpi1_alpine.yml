@@ -20,9 +20,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up QEMU
+      - name: Set up QEMU (Improved)
         # uses: docker/setup-qemu-action@v3
-        uses: tonistiigi/binfmt@latest
+        # uses: tonistiigi/binfmt@latest
+        uses: tonistiigi/binfmt@buildkit-latest
         with:
           platforms: arm/v6
 

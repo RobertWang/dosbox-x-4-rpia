@@ -1,4 +1,4 @@
-name: Build DOSBox-X for Alpine ARMv6 (3.12 Final)
+name: Build DOSBox-X for Debian Buster ARMv6
 
 on:
   push:
@@ -31,20 +31,24 @@ jobs:
       - name: Prepare Dockerfile
         run: |
           cat <<EOF > Dockerfile
-          FROM alpine:3.12
-          # 主人，注意这里：直接覆盖写入归档源，避免 sed 替换失败
-          RUN echo "http://dl-cdn.alpinelinux.org/alpine/archive/v3.12/main" > /etc/apk/repositories && \
-              echo "http://dl-cdn.alpinelinux.org/alpine/archive/v3.12/community" >> /etc/apk/repositories
-          RUN apk update && apk add --no-cache \
-            git g++ make cmake pkgconf \
-            sdl2-dev libpng-dev libjpeg-turbo-dev \
-            libogg-dev libvorbis-dev opusfile-dev flac-dev \
-            alsa-lib-dev ncurses-dev readline-dev zlib-dev \
-            linux-headers musl-dev autoconf automake libtool nasm
+          FROM arm32v5/debian:buster
+          
+          # 主人，注意这里：Buster 已 EOL，需指向 archive 源
+          RUN echo "deb http://archive.debian.org/debian buster main contrib non-free" > /etc/apt/sources.list && \
+              echo "deb-src http://archive.debian.org/debian buster main contrib non-free" >> /etc/apt/sources.list && \
+              apt-get update && \
+              apt-get install -y --no-install-recommends \
+                git build-essential cmake pkg-config \
+                libsdl2-dev libpng-dev libjpeg-dev \
+                libogg-dev libvorbis-dev libopusfile-dev libflac-dev \
+                libasound2-dev libncurses5-dev libreadline-dev zlib1g-dev \
+                autoconf automake libtool nasm
+          
           WORKDIR /src
           COPY . .
+          
           RUN ./buildconf && \
-              ./configure --host=armv6-alpine-linux-musleabihf --prefix=/usr/local --disable-sdl2-test --disable-opengl && \
+              ./configure --host=arm-linux-gnueabihf --prefix=/usr/local --disable-sdl2-test --disable-opengl && \
               make -j1 && \
               make install DESTDIR=/pkg
           EOF
@@ -69,18 +73,16 @@ jobs:
           #!/bin/sh
           echo "=========================================="
           echo "DOSBox-X Runtime Dependency Installer"
-          echo "Target: Alpine 3.12 ARMv6 (Final Support)"
+          echo "Target: Debian Buster ARMv6"
           echo "=========================================="
-          # 用户端也强制覆盖源
-          echo "http://dl-cdn.alpinelinux.org/alpine/archive/v3.12/main" > /etc/apk/repositories
-          echo "http://dl-cdn.alpinelinux.org/alpine/archive/v3.12/community" >> /etc/apk/repositories
-          apk update
+          # 用户端也需要指向 archive 源
+          echo "deb http://archive.debian.org/debian buster main contrib non-free" > /etc/apt/sources.list
+          apt-get update
           echo "Installing runtime libraries..."
-          apk add --no-cache \
-            sdl2 libpng libjpeg-turbo \
-            libogg libvorbis opusfile flac \
-            alsa-lib ncurses-libs readline zlib \
-            musl
+          apt-get install -y --no-install-recommends \
+            libsdl2-2.0-0 libpng16-16 libjpeg62-turbo \
+            libogg0 libvorbis0a libopusfile0 libflac8 \
+            libasound2 libncurses5 libreadline7 zlib1g
           echo ""
           echo "=========================================="
           echo "Installation Complete."
@@ -92,16 +94,16 @@ jobs:
 
       - name: Package Artifacts
         run: |
-          tar -czvf dosbox-x-alpine-armv6.tar.gz -C ./pkg .
-          tar -rvf dosbox-x-alpine-armv6.tar.gz install_deps.sh
+          tar -czvf dosbox-x-debian-armv6.tar.gz -C ./pkg .
+          tar -rvf dosbox-x-debian-armv6.tar.gz install_deps.sh
           echo "Package size:"
-          ls -lh dosbox-x-alpine-armv6.tar.gz
+          ls -lh dosbox-x-debian-armv6.tar.gz
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: dosbox-x-alpine-armv6.tar.gz
+          files: dosbox-x-debian-armv6.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
@@ -110,4 +112,4 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         with:
           name: dosbox-x-dev-build
-          path: dosbox-x-alpine-armv6.tar.gz
+          path: dosbox-x-debian-armv6.tar.gz

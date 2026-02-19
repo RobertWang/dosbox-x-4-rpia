@@ -47,17 +47,16 @@ jobs:
           WORKDIR /src
           COPY . .
           
-          # 主人，注意这里：显式获取 SDL2 参数并传递给 configure
-          RUN export SDL2_CFLAGS=\$(sdl2-config --cflags) && \
-              export SDL2_LIBS=\$(sdl2-config --libs) && \
-              echo "SDL2_CFLAGS: \$SDL2_CFLAGS" && \
-              echo "SDL2_LIBS: \$SDL2_LIBS" && \
-              if [ -f "./autogen.sh" ]; then \
+          # 主人，注意这里：直接使用 configure，不依赖 buildconf/autogen.sh
+          RUN if [ -f "./configure" ]; then \
+                echo "Configure script found, proceeding..."; \
+              elif [ -f "./autogen.sh" ]; then \
                 chmod +x ./autogen.sh && ./autogen.sh; \
               elif [ -f "./buildconf" ]; then \
                 chmod +x ./buildconf && ./buildconf; \
               else \
-                echo "No buildconf script found, assuming configure exists"; \
+                echo "ERROR: No configure, autogen.sh, or buildconf found!"; \
+                exit 1; \
               fi && \
               ./configure --prefix=/usr/local --disable-sdl2-test --disable-opengl && \
               make -j1 && \

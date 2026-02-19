@@ -46,13 +46,23 @@ jobs:
             sh -c "
               set -e
               
-              # 1. 调试：列出文件，确认 APKBUILD 是否存在
-              echo '--- Checking workspace files ---'
+              # --- 增强调试开始 ---
+              echo '=== 当前工作目录 ==='
+              pwd
+              echo '=== 所有文件列表 (包括隐藏文件) ==='
               ls -la /workspace
+              echo '=== 查找 APKBUILD 文件 ==='
+              find /workspace -name '*APKBUILD*' -o -name '*apkbuild*'
+              # 如果找不到，暂停并报错
               if [ ! -f /workspace/APKBUILD ]; then
                 echo 'ERROR: APKBUILD not found in repository root!'
+                echo 'Please check:'
+                echo '1. Did you git add, commit, and push the file?'
+                echo '2. Is the filename exactly APKBUILD (uppercase)?'
+                echo '3. Are you on the correct branch?'
                 exit 1
               fi
+              # --- 增强调试结束 ---
 
               # 2. 安装依赖
               apk add --no-cache abuild build-base bash autoconf automake libtool \

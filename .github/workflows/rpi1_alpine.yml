@@ -18,7 +18,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: recursive  # 关键：初始化子模块
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -33,7 +33,7 @@ jobs:
           cat <<EOF > Dockerfile
           FROM arm32v5/debian:buster
           
-          # 主人，注意这里：Buster 已 EOL，需指向 archive 源
+          # 指向 archive 源（Buster 已 EOL）
           RUN echo "deb http://archive.debian.org/debian buster main contrib non-free" > /etc/apt/sources.list && \
               echo "deb-src http://archive.debian.org/debian buster main contrib non-free" >> /etc/apt/sources.list && \
               apt-get update && \
@@ -47,7 +47,14 @@ jobs:
           WORKDIR /src
           COPY . .
           
-          RUN ./buildconf && \
+          # 主人，注意这里：先检查 autogen.sh，如果没有则直接使用 configure
+          RUN if [ -f "./autogen.sh" ]; then \
+                chmod +x ./autogen.sh && ./autogen.sh; \
+              elif [ -f "./buildconf" ]; then \
+                chmod +x ./buildconf && ./buildconf; \
+              else \
+                echo "No buildconf script found, assuming configure exists"; \
+              fi && \
               ./configure --host=arm-linux-gnueabihf --prefix=/usr/local --disable-sdl2-test --disable-opengl && \
               make -j1 && \
               make install DESTDIR=/pkg
@@ -75,7 +82,6 @@ jobs:
           echo "DOSBox-X Runtime Dependency Installer"
           echo "Target: Debian Buster ARMv6"
           echo "=========================================="
-          # 用户端也需要指向 archive 源
           echo "deb http://archive.debian.org/debian buster main contrib non-free" > /etc/apt/sources.list
           apt-get update
           echo "Installing runtime libraries..."

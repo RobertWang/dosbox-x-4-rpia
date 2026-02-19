@@ -31,10 +31,15 @@ jobs:
         run: |
           ALPINE_VER="${{ github.event.inputs.alpine_version || '3.19' }}"
           DEBUG_ENABLED="${{ github.event.inputs.debug_mode || false }}"
-          PKGVER="${{ github.ref_type == 'tag' && github.ref_name || 'dev-' }}"
           
-          if [ "$PKGVER" = "dev-" ]; then
-            PKGVER="dev-$(date +%Y%m%d%H%M)"
+          # 生成符合 Alpine 规范的版本号
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # 如果是 tag，移除 v 前缀
+            PKGVER="${{ github.ref_name }}"
+            PKGVER="${PKGVER#v}"
+          else
+            # 开发版本使用 0.0.0_git 格式
+            PKGVER="0.0.0_git$(date +%Y%m%d%H%M)"
           fi
 
           docker run --rm \
@@ -49,16 +54,13 @@ jobs:
               echo "=== Workspace Files ==="
               ls -la /workspace
               
-              # 安装依赖 - 移除 musl-cross
               apk add --no-cache abuild build-base bash autoconf automake libtool \
                 sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev \
                 file git ca-certificates
               
-              # 配置 abuild 环境
               mkdir -p ~/.abuild
               cp /etc/apk/keys/*.rsa.pub ~/.abuild/ 2>/dev/null || true
               
-              # 设置交叉编译架构
               echo "CARCH=armhf" >> ~/.abuild/abuild.conf
               echo "CHOST=armv7-alpine-linux-musleabihf" >> ~/.abuild/abuild.conf
               echo "PACKAGER_PRIVKEY=/workspace/apkkey" >> ~/.abuild/abuild.conf
@@ -67,17 +69,16 @@ jobs:
               
               cd /workspace
               
-              # 生成 APKBUILD
+              # 生成 APKBUILD - 注意 URL 不要有空格
               printf "%s\n" "# Maintainer: 主人" > APKBUILD
               printf "%s\n" "pkgname=dosbox-x" >> APKBUILD
-              printf "%s\n" "pkgver=$PKGVER" >> APKBUILD
+              printf "%s\n" "pkgver=${PKGVER}" >> APKBUILD
               printf "%s\n" "pkgrel=1" >> APKBUILD
               printf "%s\n" "pkgdesc=\"DOSBox-X fork for Raspberry Pi\"" >> APKBUILD
               printf "%s\n" "url=\"https://github.com/RobertWang/dosbox-x-4-rpia\"" >> APKBUILD
               printf "%s\n" "arch=\"armhf\"" >> APKBUILD
               printf "%s\n" "license=\"GPL-2.0-or-later\"" >> APKBUILD
               printf "%s\n" "depends=\"sdl2 sdl2_net libpng freetype zlib\"" >> APKBUILD
-              # 移除 musl-cross 依赖
               printf "%s\n" "makedepends=\"build-base sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev autoconf automake libtool git\"" >> APKBUILD
               printf "%s\n" "options=\"!check\"" >> APKBUILD
               printf "%s\n" "" >> APKBUILD
@@ -103,16 +104,13 @@ jobs:
                 sed -i "s|--disable-sdl2-test|--disable-sdl2-test --enable-debug|" APKBUILD
               fi
               
-              # 执行构建
               echo "=== Starting abuild ==="
               abuild -F -r
               
-              # 查找生成的 apk 包
               echo "=== Searching for APK files ==="
               find /root/packages -name "*.apk" 2>/dev/null || true
               find ~/packages -name "*.apk" 2>/dev/null || true
               
-              # 复制 apk 包
               mkdir -p /workspace/release
               if [ -d ~/packages/armhf ]; then
                 cp ~/packages/armhf/*.apk /workspace/release/
@@ -125,7 +123,6 @@ jobs:
                 find ~ -name "*.apk" 2>/dev/null || true
               fi
               
-              # 生成初始化脚本
               DEPS=$(grep "^depends=" APKBUILD | cut -d"\"" -f2 | tr " " "\n" | grep -v "^$" | sed "s/^/apk add --no-cache /" | tr "\n" ";" )
               
               printf "%s\n" "#!/bin/sh" > /workspace/dosbox-x-init.sh

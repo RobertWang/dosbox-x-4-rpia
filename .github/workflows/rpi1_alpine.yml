@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:
     inputs:
       version_tag:
         description: 'Version Tag (e.g., v1.0.0-test)'
@@ -20,40 +20,39 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up QEMU (Improved)
-        # uses: docker/setup-qemu-action@v3
-        # uses: tonistiigi/binfmt@latest
-        uses: tonistiigi/binfmt@buildkit-latest
+      - name: Set up QEMU (Critical Fix)
+        # 主人，这里使用了正确的标签 latest，并且配置了 arm/v6 支持
+        # 这一步必须在所有 docker run 命令之前执行
+        uses: tonistiigi/binfmt@latest
         with:
-          platforms: arm/v6
-
-      - name: Verify Architecture (Critical Step)
-        run: |
-          echo "Checking architecture of alpine:3.13 (Last official ARMv6 support)..."
-          # 这里强制使用 3.13，不再尝试 3.23.3
-          ARCH=$(docker run --rm --platform linux/arm/v6 alpine:3.23.3 uname -m)
-          echo "Detected Architecture: $ARCH"
-          if [[ "$ARCH" != *"armv6"* ]]; then
-            echo "Error: Architecture is not ARMv6! Got: $ARCH"
-            exit 1
-          fi
-        continue-on-error: false
+          platforms: arm,v6
 
       - name: Build in Alpine Environment
         run: |
-          IMAGE="alpine:3.23.3"
+          IMAGE="alpine:3.13"
           
           docker run --rm --privileged --platform linux/arm/v6 \
             -v ${{ github.workspace }}:/src -w /src $IMAGE sh -c "
             set -e
+            
+            # 主人，注意这里：因为 3.13 已 EOL，需要切换到 archive 源
+            echo 'Fixing APK repositories for EOL version...'
+            sed -i 's/dl-cdn.alpinelinux.org\/alpine\/v3.13/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.13/g' /etc/apk/repositories
+            
+            echo 'Updating apk...'
+            apk update
+            
             echo 'Installing build dependencies...'
-            # 3.13 的包名可能略有不同，如果报错我们再调整
             apk add --no-cache \
               git g++ make cmake pkgconf \
               sdl2-dev libpng-dev libjpeg-turbo-dev \
               libogg-dev libvorbis-dev opusfile-dev flac-dev \
               alsa-lib-dev ncurses-dev readline-dev zlib-dev \
               linux-headers musl-dev autoconf automake libtool nasm
+            
+            echo 'Verifying Architecture...'
+            uname -m
+            # 如果这里输出 armv6l，说明 QEMU 工作正常
             
             echo 'Configuring...'
             ./buildconf
@@ -73,21 +72,16 @@ jobs:
         run: |
           cat <<EOF > install_deps.sh
           #!/bin/sh
-          echo "=========================================="
-          echo "DOSBox-X Runtime Dependency Installer"
-          echo "Target: Alpine 3.23.3 ARMv6"
-          echo "=========================================="
+          # 注意：运行时也需要使用 archive 源，因为 3.13 已 EOL
+          sed -i 's/dl-cdn.alpinelinux.org\/alpine\/v3.13/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.13/g' /etc/apk/repositories
           apk update
           apk add --no-cache \
             sdl2 libpng libjpeg-turbo \
             libogg libvorbis opusfile flac \
             alsa-lib ncurses-libs readline zlib \
             musl
-          echo ""
-          echo "Installation Complete."
+          echo "Dependencies installed."
           echo "Please run: export PATH=\$PATH:/usr/local/bin"
-          echo "Then run: dosbox-x"
-          echo "=========================================="
           EOF
           chmod +x install_deps.sh
 

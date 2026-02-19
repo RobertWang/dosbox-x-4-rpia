@@ -14,7 +14,7 @@ on:
       alpine_version:
         description: 'Alpine Linux Version (e.g., 3.19, 3.20, edge)'
         required: false
-        default: '3.23.3'
+        default: '3.19'
         type: string
 
 jobs:
@@ -29,7 +29,7 @@ jobs:
 
       - name: Build APK in Alpine Container
         run: |
-          ALPINE_VER="${{ github.event.inputs.alpine_version || '3.23.3' }}"
+          ALPINE_VER="${{ github.event.inputs.alpine_version || '3.19' }}"
           DEBUG_ENABLED="${{ github.event.inputs.debug_mode || false }}"
           PKGVER="${{ github.ref_type == 'tag' && github.ref_name || 'dev-' }}"
           
@@ -49,11 +49,12 @@ jobs:
               echo "=== Workspace Files ==="
               ls -la /workspace
               
+              # 安装依赖 - 移除 musl-cross
               apk add --no-cache abuild build-base bash autoconf automake libtool \
                 sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev \
-                file lddtree git ca-certificates musl-cross
+                file git ca-certificates
               
-              # 配置 abuild 环境 - 关键：设置目标架构
+              # 配置 abuild 环境
               mkdir -p ~/.abuild
               cp /etc/apk/keys/*.rsa.pub ~/.abuild/ 2>/dev/null || true
               
@@ -66,7 +67,7 @@ jobs:
               
               cd /workspace
               
-              # 使用 printf 逐行生成 APKBUILD
+              # 生成 APKBUILD
               printf "%s\n" "# Maintainer: 主人" > APKBUILD
               printf "%s\n" "pkgname=dosbox-x" >> APKBUILD
               printf "%s\n" "pkgver=$PKGVER" >> APKBUILD
@@ -76,10 +77,10 @@ jobs:
               printf "%s\n" "arch=\"armhf\"" >> APKBUILD
               printf "%s\n" "license=\"GPL-2.0-or-later\"" >> APKBUILD
               printf "%s\n" "depends=\"sdl2 sdl2_net libpng freetype zlib\"" >> APKBUILD
-              printf "%s\n" "makedepends=\"build-base sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev autoconf automake libtool git musl-cross\"" >> APKBUILD
+              # 移除 musl-cross 依赖
+              printf "%s\n" "makedepends=\"build-base sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev autoconf automake libtool git\"" >> APKBUILD
               printf "%s\n" "options=\"!check\"" >> APKBUILD
               printf "%s\n" "" >> APKBUILD
-              # 修复：URL 中不要有空格
               printf "%s\n" "source=\"\$pkgname-\$pkgver.tar.gz::https://github.com/RobertWang/dosbox-x-4-rpia/archive/refs/tags/v\$pkgver.tar.gz\"" >> APKBUILD
               printf "%s\n" "" >> APKBUILD
               printf "%s\n" "build() {" >> APKBUILD
@@ -102,7 +103,8 @@ jobs:
                 sed -i "s|--disable-sdl2-test|--disable-sdl2-test --enable-debug|" APKBUILD
               fi
               
-              # 执行构建，-r 表示不安装到系统，只生成包
+              # 执行构建
+              echo "=== Starting abuild ==="
               abuild -F -r
               
               # 查找生成的 apk 包
@@ -110,12 +112,17 @@ jobs:
               find /root/packages -name "*.apk" 2>/dev/null || true
               find ~/packages -name "*.apk" 2>/dev/null || true
               
-              # 复制 apk 包（架构目录可能是 armhf 或默认）
+              # 复制 apk 包
               mkdir -p /workspace/release
               if [ -d ~/packages/armhf ]; then
                 cp ~/packages/armhf/*.apk /workspace/release/
+                echo "Copied from ~/packages/armhf/"
               elif [ -d ~/packages ]; then
                 cp ~/packages/*.apk /workspace/release/ 2>/dev/null || true
+                echo "Copied from ~/packages/"
+              else
+                echo "WARNING: No packages directory found!"
+                find ~ -name "*.apk" 2>/dev/null || true
               fi
               
               # 生成初始化脚本

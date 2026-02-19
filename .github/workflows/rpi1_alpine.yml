@@ -1,4 +1,4 @@
-name: Build DOSBox-X for Alpine ARMv6 (3.23.3)
+name: Build DOSBox-X for Alpine ARMv6 (3.13)
 
 on:
   push:
@@ -20,8 +20,8 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up QEMU (Official Docker Action)
-        # 主人，这里换回了官方 Docker 动作，版本固定为 v3，更稳定
+      - name: Set up QEMU
+        # 主人，这里使用稳定的 v3 版本
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm/v6
@@ -31,32 +31,33 @@ jobs:
 
       - name: Build in Alpine Environment
         run: |
-          IMAGE="alpine:3.23.3"
+          IMAGE="alpine:3.13"
           
-          # 主人，注意：这里指定了 platform 为 arm/v6
           docker run --rm --privileged --platform linux/arm/v6 \
             -v ${{ github.workspace }}:/src -w /src $IMAGE sh -c "
             set -e
             
             echo '=========================================='
-            echo 'Step 1: Verifying Container Architecture'
+            echo 'Step 1: Fixing EOL Repositories'
+            echo '=========================================='
+            # 主人，注意这里：将源指向 archive，确保能下载到包
+            sed -i 's/dl-cdn.alpinelinux.org\/alpine\/v3.13/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.13/g' /etc/apk/repositories
+            apk update
+            
+            echo '=========================================='
+            echo 'Step 2: Verifying Container Architecture'
             echo '=========================================='
             ARCH=\$(uname -m)
             echo \"Detected Architecture: \$ARCH\"
             
-            # 关键检查：如果容器内不是 armv6l，说明镜像不支持 ARMv6
             if [[ \"\$ARCH\" != *"armv6"* ]]; then
-              echo \"ERROR: Container architecture (\$ARCH) is not ARMv6!\"
-              echo \"This binary will NOT run on Raspberry Pi Model A.\"
-              echo \"Please switch to alpine:3.13 for official ARMv6 support.\"
+              echo \"ERROR: Architecture is not ARMv6! Got: \$ARCH\"
               exit 1
             fi
             
             echo '=========================================='
-            echo 'Step 2: Installing Build Dependencies'
+            echo 'Step 3: Installing Build Dependencies'
             echo '=========================================='
-            apk update
-            # 如果 3.23.3 是 edge 或未发布版本，可能需要调整源
             apk add --no-cache \
               git g++ make cmake pkgconf \
               sdl2-dev libpng-dev libjpeg-turbo-dev \
@@ -65,7 +66,7 @@ jobs:
               linux-headers musl-dev autoconf automake libtool nasm
             
             echo '=========================================='
-            echo 'Step 3: Configuring DOSBox-X'
+            echo 'Step 4: Configuring DOSBox-X'
             echo '=========================================='
             ./buildconf
             ./configure --host=armv6-alpine-linux-musleabihf \
@@ -74,12 +75,12 @@ jobs:
               --disable-opengl
             
             echo '=========================================='
-            echo 'Step 4: Compiling (Single Thread)'
+            echo 'Step 5: Compiling (Single Thread)'
             echo '=========================================='
             make -j1
             
             echo '=========================================='
-            echo 'Step 5: Installing to Package Dir'
+            echo 'Step 6: Installing to Package Dir'
             echo '=========================================='
             make install DESTDIR=/pkg
           "
@@ -90,9 +91,10 @@ jobs:
           #!/bin/sh
           echo "=========================================="
           echo "DOSBox-X Runtime Dependency Installer"
-          echo "Target: Alpine 3.23.3 ARMv6"
+          echo "Target: Alpine 3.13 ARMv6"
           echo "=========================================="
-          echo "Updating package list..."
+          # 主人，用户端也需要修复源，因为他们的系统也是 3.13 EOL 版本
+          sed -i 's/dl-cdn.alpinelinux.org\/alpine\/v3.13/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.13/g' /etc/apk/repositories
           apk update
           echo "Installing runtime libraries..."
           apk add --no-cache \

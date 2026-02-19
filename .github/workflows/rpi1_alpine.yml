@@ -29,11 +29,11 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Verify Architecture (Critical Step)
-        # 主人，这里我们使用 alpine:3.13 以确保官方 ARMv6 支持
+        # 主人，这里我们使用 alpine:3.23.3 以确保官方 ARMv6 支持
         # 如果您坚持使用 3.23.3，请在此处修改镜像名
         run: |
-          echo "Checking architecture of alpine:3.13..."
-          ARCH=$(docker run --rm --platform linux/arm/v6 alpine:3.13 uname -m)
+          echo "Checking architecture of alpine:3.23.3..."
+          ARCH=$(docker run --rm --platform linux/arm/v6 alpine:3.23.3 uname -m)
           echo "Detected Architecture: $ARCH"
           if [[ "$ARCH" != *"armv6"* ]]; then
             echo "Error: Architecture is not ARMv6!"

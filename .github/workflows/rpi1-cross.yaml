@@ -1,4 +1,4 @@
-name: Build DOSBox-X for Debian Buster ARMv6
+name: Build Alpine APK for ARMHF
 
 on:
   push:
@@ -6,132 +6,93 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      version_tag:
-        description: 'Version Tag (e.g., v1.0.0-test)'
+      debug_mode:
+        description: 'Enable Debug Build'
         required: false
-        default: 'dev-build'
+        default: false
+        type: boolean
+      alpine_version:
+        description: 'Alpine Linux Version (e.g., 3.19, 3.20, edge)'
+        required: false
+        default: '3.19'
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Prepare Dockerfile
+      - name: Build APK in Alpine Container
         run: |
-          cat <<EOF > Dockerfile
-          FROM arm32v5/debian:buster
+          # 1. 在 Shell 中处理逻辑，减少 YAML 表达式复杂度
+          ALPINE_VER="${{ github.event.inputs.alpine_version || '3.19' }}"
+          DEBUG_ENABLED="${{ github.event.inputs.debug_mode || false }}"
+          PKGVER="${{ github.ref_type == 'tag' && github.ref_name || 'dev-' }}"
           
-          # 指向 archive 源（Buster 已 EOL）
-          RUN echo "deb http://archive.debian.org/debian buster main contrib non-free" > /etc/apt/sources.list && \
-              echo "deb-src http://archive.debian.org/debian buster main contrib non-free" >> /etc/apt/sources.list && \
-              apt-get update && \
-              apt-get install -y --no-install-recommends \
-                git build-essential cmake pkg-config \
-                libsdl2-dev libpng-dev libjpeg-dev \
-                libogg-dev libvorbis-dev libopusfile-dev libflac-dev \
-                libasound2-dev libncurses5-dev libreadline-dev zlib1g-dev \
-                autoconf automake libtool nasm
-          
-          WORKDIR /src
-          COPY . .
-          
-          # 主人，注意这里：先获取 SDL2 参数，然后运行 autogen.sh 和 configure
-          RUN echo "=== SDL2 Detection Test ===" && \
-              sdl2-config --version && \
-              sdl2-config --cflags && \
-              sdl2-config --libs && \
-              pkg-config --modversion sdl2 && \
-              echo "=== SDL2 OK ===" && \
-              \
-              export SDL2_CFLAGS="\$(sdl2-config --cflags)" && \
-              export SDL2_LIBS="\$(sdl2-config --libs)" && \
-              export PKG_CONFIG_PATH="/usr/lib/arm-linux-gnueabi/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig" && \
-              \
-              if [ -f "./autogen.sh" ]; then \
-                echo "Running autogen.sh..." && \
-                chmod +x ./autogen.sh && ./autogen.sh; \
-              elif [ -f "./buildconf" ]; then \
-                echo "Running buildconf..." && \
-                chmod +x ./buildconf && ./buildconf; \
-              else \
-                echo "Using existing configure script"; \
-              fi && \
-              \
-              echo "=== Running Configure ===" && \
-              ./configure --prefix=/usr/local --disable-sdl2-test --disable-opengl && \
-              echo "=== Configure Complete ===" && \
-              make -j1 && \
-              make install DESTDIR=/pkg
-          EOF
-          echo "Dockerfile created:"
-          cat Dockerfile
+          if [ "$PKGVER" = "dev-" ]; then
+            PKGVER="dev-$(date +%Y%m%d%H%M)"
+          fi
 
-      - name: Build using Docker Buildx
-        run: |
-          docker buildx build --platform linux/arm/v6 --load -t dosbox-x-build -f Dockerfile .
-          
-          # 提取产物
-          docker create --name temp-container dosbox-x-build
-          docker cp temp-container:/pkg ./pkg
-          docker rm temp-container
-          
-          echo "Build artifacts extracted:"
-          ls -la ./pkg
+          # 2. 运行 Docker 构建
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e DEBUG_ENABLED="$DEBUG_ENABLED" \
+            -e PKGVER="$PKGVER" \
+            "alpine:$ALPINE_VER" \
+            sh -c "
+              set -e
+              
+              # 安装依赖
+              apk add --no-cache abuild build-base bash autoconf automake libtool \
+                sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev \
+                file lddtree
+              
+              # 配置 abuild
+              mkdir -p ~/.abuild
+              cp /etc/apk/keys/*.rsa.pub ~/.abuild/
+              echo 'PACKAGER_PRIVKEY=/workspace/apkkey' >> ~/.abuild/abuild.conf
+              abuild-keygen -a -n
+              
+              # 准备 APKBUILD
+              cd /workspace
+              sed -i \"s/^pkgver=.*/pkgver=\$PKGVER/\" APKBUILD
+              
+              # 调试模式配置
+              if [ \"\$DEBUG_ENABLED\" = \"true\" ]; then
+                echo 'Enabling debug mode...'
+                sed -i 's|--disable-sdl2-test|--disable-sdl2-test --enable-debug|' APKBUILD
+              fi
+              
+              # 执行构建
+              abuild -F -r
+              
+              # 3. 使用 printf 生成初始化脚本 (避免 heredoc 问题)
+              DEPS=\$(grep '^depends=' APKBUILD | cut -d'\"' -f2 | tr ' ' '\n' | grep -v '^\$' | sed 's/^/apk add --no-cache /' | tr '\n' ';' )
+              
+              printf '%s\n' '#!/bin/sh' > /workspace/dosbox-x-init.sh
+              printf '%s\n' 'echo \"Initializing dosbox-x...\"' >> /workspace/dosbox-x-init.sh
+              printf '%s\n' '\$DEPS' >> /workspace/dosbox-x-init.sh
+              printf '%s\n' 'export SDL_AUDIODRIVER=alsa' >> /workspace/dosbox-x-init.sh
+              printf '%s\n' 'export DISPLAY=:0' >> /workspace/dosbox-x-init.sh
+              printf '%s\n' 'echo \"Done.\"' >> /workspace/dosbox-x-init.sh
+              
+              chmod +x /workspace/dosbox-x-init.sh
+              
+              # 整理产物
+              mkdir -p /workspace/release
+              cp ~/packages/armhf/*.apk /workspace/release/
+              cp /workspace/dosbox-x-init.sh /workspace/release/
+            "
 
-      - name: Create Runtime Dependency Script
-        run: |
-          cat <<EOF > install_deps.sh
-          #!/bin/sh
-          echo "=========================================="
-          echo "DOSBox-X Runtime Dependency Installer"
-          echo "Target: Debian Buster ARMv6"
-          echo "=========================================="
-          echo "deb http://archive.debian.org/debian buster main contrib non-free" > /etc/apt/sources.list
-          apt-get update
-          echo "Installing runtime libraries..."
-          apt-get install -y --no-install-recommends \
-            libsdl2-2.0-0 libpng16-16 libjpeg62-turbo \
-            libogg0 libvorbis0a libopusfile0 libflac8 \
-            libasound2 libncurses5 libreadline7 zlib1g
-          echo ""
-          echo "=========================================="
-          echo "Installation Complete."
-          echo "Please run: export PATH=\$PATH:/usr/local/bin"
-          echo "Then run: dosbox-x"
-          echo "=========================================="
-          EOF
-          chmod +x install_deps.sh
-
-      - name: Package Artifacts
-        run: |
-          tar -czvf dosbox-x-debian-armv6.tar.gz -C ./pkg .
-          tar -rvf dosbox-x-debian-armv6.tar.gz install_deps.sh
-          echo "Package size:"
-          ls -lh dosbox-x-debian-armv6.tar.gz
-
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: dosbox-x-debian-armv6.tar.gz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Upload Artifact for Manual Dispatch
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch'
         with:
-          name: dosbox-x-dev-build
-          path: dosbox-x-debian-armv6.tar.gz
+          name: "dosbox-x-alpine-armhf-${{ github.event_name == 'workflow_dispatch' && 'test' || 'release' }}"
+          path: release/
+          retention-days: "${{ github.event_name == 'workflow_dispatch' && 1 || 30 }}"

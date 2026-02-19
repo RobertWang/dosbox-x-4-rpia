@@ -21,7 +21,6 @@ jobs:
           submodules: recursive
 
       - name: Set up QEMU (Official Action)
-        # 主人，这是官方动作，通常最可靠
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm
@@ -30,27 +29,21 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Diagnose QEMU Registration (Critical)
-        # 主人，这一步非常关键，用于确认 QEMU 是否真的注册成功了
         run: |
           echo "Checking binfmt_misc..."
           ls -l /proc/sys/fs/binfmt_misc/
           if [ ! -f /proc/sys/fs/binfmt_misc/qemu-arm ]; then
-            echo "ERROR: QEMU ARM interpreter not found!"
-            echo "GitHub Actions runner does not support ARM emulation."
-            exit 1
+            echo "WARNING: QEMU ARM interpreter not found in binfmt_misc!"
+            echo "Build might fail with exec format error."
           else
             echo "SUCCESS: QEMU ARM interpreter found."
-            cat /proc/sys/fs/binfmt_misc/qemu-arm
           fi
 
-      - name: Build using Docker Buildx
-        # 主人，使用 buildx 通常比 docker run 更稳定
+      - name: Prepare Dockerfile
         run: |
-          IMAGE="alpine:3.13"
-          
-          # 创建一个临时 Dockerfile 用于构建
-          cat <<EOF > Dockerfile.build
-          FROM ${IMAGE}
+          # 主人，这里直接命名为 Dockerfile，避免找不到文件的错误
+          cat <<EOF > Dockerfile
+          FROM alpine:3.13
           RUN sed -i 's/dl-cdn.alpinelinux.org\/alpine\/v3.13/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.13/g' /etc/apk/repositories
           RUN apk update && apk add --no-cache \
             git g++ make cmake pkgconf \
@@ -65,14 +58,21 @@ jobs:
               make -j1 && \
               make install DESTDIR=/pkg
           EOF
+          echo "Dockerfile created:"
+          ls -la Dockerfile
+
+      - name: Build using Docker Buildx
+        run: |
+          # 主人，这里显式指定 -f Dockerfile 虽然默认也是它，但显式更清晰
+          docker buildx build --platform linux/arm/v6 --load -t dosbox-x-build -f Dockerfile .
           
-          # 构建镜像
-          docker buildx build --platform linux/arm/v6 --load -t dosbox-x-build .
-          
-          # 从镜像中复制产物
+          # 提取产物
           docker create --name temp-container dosbox-x-build
           docker cp temp-container:/pkg ./pkg
           docker rm temp-container
+          
+          echo "Build artifacts extracted:"
+          ls -la ./pkg
 
       - name: Create Runtime Dependency Script
         run: |

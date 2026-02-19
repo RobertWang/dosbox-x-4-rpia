@@ -43,71 +43,75 @@ jobs:
             -e DEBUG_ENABLED="$DEBUG_ENABLED" \
             -e PKGVER="$PKGVER" \
             "alpine:$ALPINE_VER" \
-            sh -c "
+            /bin/sh -c '
               set -e
               
-              # --- 增强调试开始 ---
-              echo '=== 当前工作目录 ==='
-              pwd
-              echo '=== 所有文件列表 (包括隐藏文件) ==='
+              echo "=== Workspace Files ==="
               ls -la /workspace
-              echo '=== 查找 APKBUILD 文件 ==='
-              find /workspace -name '*APKBUILD*' -o -name '*apkbuild*'
-              # 如果找不到，暂停并报错
-              if [ ! -f /workspace/APKBUILD ]; then
-                echo 'ERROR: APKBUILD not found in repository root!'
-                echo 'Please check:'
-                echo '1. Did you git add, commit, and push the file?'
-                echo '2. Is the filename exactly APKBUILD (uppercase)?'
-                echo '3. Are you on the correct branch?'
-                exit 1
-              fi
-              # --- 增强调试结束 ---
-
-              # 2. 安装依赖
+              
               apk add --no-cache abuild build-base bash autoconf automake libtool \
                 sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev \
-                file lddtree
+                file lddtree git ca-certificates
               
-              # 3. 配置 abuild 环境
               mkdir -p ~/.abuild
-              # 复制现有系统密钥（如果有）
               cp /etc/apk/keys/*.rsa.pub ~/.abuild/ 2>/dev/null || true
-              echo 'PACKAGER_PRIVKEY=/workspace/apkkey' >> ~/.abuild/abuild.conf
-              
-              # 生成密钥并自动安装公钥到 /etc/apk/keys
+              echo "PACKAGER_PRIVKEY=/workspace/apkkey" >> ~/.abuild/abuild.conf
               abuild-keygen -a -n
               
-              # 4. 准备 APKBUILD
               cd /workspace
-              sed -i \"s/^pkgver=.*/pkgver=\$PKGVER/\" APKBUILD
               
-              # 5. 调试模式配置
-              if [ \"\$DEBUG_ENABLED\" = \"true\" ]; then
-                echo 'Enabling debug mode...'
-                sed -i 's|--disable-sdl2-test|--disable-sdl2-test --enable-debug|' APKBUILD
+              # 使用 printf 逐行生成 APKBUILD，避免 heredoc 问题
+              printf "%s\n" "# Maintainer: 主人" > APKBUILD
+              printf "%s\n" "pkgname=dosbox-x" >> APKBUILD
+              printf "%s\n" "pkgver=$PKGVER" >> APKBUILD
+              printf "%s\n" "pkgrel=1" >> APKBUILD
+              printf "%s\n" "pkgdesc=\"DOSBox-X fork for Raspberry Pi\"" >> APKBUILD
+              printf "%s\n" "url=\"https://github.com/RobertWang/dosbox-x-4-rpia\"" >> APKBUILD
+              printf "%s\n" "arch=\"armhf\"" >> APKBUILD
+              printf "%s\n" "license=\"GPL-2.0-or-later\"" >> APKBUILD
+              printf "%s\n" "depends=\"sdl2 sdl2_net libpng freetype zlib\"" >> APKBUILD
+              printf "%s\n" "makedepends=\"build-base sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev autoconf automake libtool git\"" >> APKBUILD
+              printf "%s\n" "options=\"!check\"" >> APKBUILD
+              printf "%s\n" "" >> APKBUILD
+              printf "%s\n" "source=\"\$pkgname-\$pkgver.tar.gz::https://github.com/RobertWang/dosbox-x-4-rpia/archive/refs/tags/v\$pkgver.tar.gz\"" >> APKBUILD
+              printf "%s\n" "" >> APKBUILD
+              printf "%s\n" "build() {" >> APKBUILD
+              printf "%s\n" "    cd \"\$srcdir/\$pkgname-\$pkgver\"" >> APKBUILD
+              printf "%s\n" "    ./buildconf" >> APKBUILD
+              printf "%s\n" "    ./configure --host=armv7-alpine-linux-musleabihf --prefix=/usr --disable-sdl2-test" >> APKBUILD
+              printf "%s\n" "    make" >> APKBUILD
+              printf "%s\n" "}" >> APKBUILD
+              printf "%s\n" "" >> APKBUILD
+              printf "%s\n" "package() {" >> APKBUILD
+              printf "%s\n" "    cd \"\$srcdir/\$pkgname-\$pkgver\"" >> APKBUILD
+              printf "%s\n" "    make DESTDIR=\"\$pkgdir\" install" >> APKBUILD
+              printf "%s\n" "}" >> APKBUILD
+              
+              echo "=== APKBUILD Content ==="
+              cat APKBUILD
+              
+              if [ "$DEBUG_ENABLED" = "true" ]; then
+                echo "Enabling debug mode..."
+                sed -i "s|--disable-sdl2-test|--disable-sdl2-test --enable-debug|" APKBUILD
               fi
               
-              # 6. 执行构建
               abuild -F -r
               
-              # 7. 生成初始化脚本
-              DEPS=\$(grep '^depends=' APKBUILD | cut -d'\"' -f2 | tr ' ' '\n' | grep -v '^\$' | sed 's/^/apk add --no-cache /' | tr '\n' ';' )
+              DEPS=$(grep "^depends=" APKBUILD | cut -d"\"" -f2 | tr " " "\n" | grep -v "^$" | sed "s/^/apk add --no-cache /" | tr "\n" ";" )
               
-              printf '%s\n' '#!/bin/sh' > /workspace/dosbox-x-init.sh
-              printf '%s\n' 'echo \"Initializing dosbox-x...\"' >> /workspace/dosbox-x-init.sh
-              printf '%s\n' '\$DEPS' >> /workspace/dosbox-x-init.sh
-              printf '%s\n' 'export SDL_AUDIODRIVER=alsa' >> /workspace/dosbox-x-init.sh
-              printf '%s\n' 'export DISPLAY=:0' >> /workspace/dosbox-x-init.sh
-              printf '%s\n' 'echo \"Done.\"' >> /workspace/dosbox-x-init.sh
+              printf "%s\n" "#!/bin/sh" > /workspace/dosbox-x-init.sh
+              printf "%s\n" "echo \"Initializing dosbox-x...\"" >> /workspace/dosbox-x-init.sh
+              printf "%s\n" "$DEPS" >> /workspace/dosbox-x-init.sh
+              printf "%s\n" "export SDL_AUDIODRIVER=alsa" >> /workspace/dosbox-x-init.sh
+              printf "%s\n" "export DISPLAY=:0" >> /workspace/dosbox-x-init.sh
+              printf "%s\n" "echo \"Done.\"" >> /workspace/dosbox-x-init.sh
               
               chmod +x /workspace/dosbox-x-init.sh
               
-              # 8. 整理产物
               mkdir -p /workspace/release
               cp ~/packages/armhf/*.apk /workspace/release/
               cp /workspace/dosbox-x-init.sh /workspace/release/
-            "
+            '
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

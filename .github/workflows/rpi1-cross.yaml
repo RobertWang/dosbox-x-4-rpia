@@ -70,17 +70,7 @@ jobs:
               
               cd /workspace
               
-              # 根据是否为 tag 构建，使用不同的 source 策略
-              if [ "$IS_TAG" = "true" ]; then
-                # Tag 构建：从 GitHub 下载
-                SOURCE_URL="https://github.com/RobertWang/dosbox-x-4-rpia/archive/refs/tags/v${PKGVER}.tar.gz"
-                printf "%s\n" "source=\"\$pkgname-\$pkgver.tar.gz::${SOURCE_URL}\"" >> APKBUILD.tmp
-              else
-                # 开发构建：使用本地源码
-                printf "%s\n" "source=\".\"" >> APKBUILD.tmp
-              fi
-              
-              # 生成完整的 APKBUILD
+              # 使用 printf 生成 APKBUILD (避免 heredoc)
               printf "%s\n" "# Maintainer: 主人" > APKBUILD
               printf "%s\n" "pkgname=dosbox-x" >> APKBUILD
               printf "%s\n" "pkgver=${PKGVER}" >> APKBUILD
@@ -93,51 +83,55 @@ jobs:
               printf "%s\n" "makedepends=\"build-base sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev autoconf automake libtool git\"" >> APKBUILD
               printf "%s\n" "options=\"!check\"" >> APKBUILD
               
-              # 添加 source 行
+              # 根据构建类型设置 source
               if [ "$IS_TAG" = "true" ]; then
                 printf "%s\n" "source=\"\$pkgname-\$pkgver.tar.gz::https://github.com/RobertWang/dosbox-x-4-rpia/archive/refs/tags/v\$pkgver.tar.gz\"" >> APKBUILD
-              else
-                # 开发版本：使用本地目录
-                printf "%s\n" "source=\"dosbox-x-.tar.gz\"" >> APKBUILD
-              fi
-              
-              printf "%s\n" "" >> APKBUILD
-              printf "%s\n" "build() {" >> APKBUILD
-              
-              if [ "$IS_TAG" = "true" ]; then
+                printf "%s\n" "" >> APKBUILD
+                printf "%s\n" "build() {" >> APKBUILD
                 printf "%s\n" "    cd \"\$srcdir/\$pkgname-\$pkgver\"" >> APKBUILD
-              else
-                printf "%s\n" "    cd \"\$srcdir/dosbox-x\"" >> APKBUILD
-              fi
-              
-              printf "%s\n" "    ./buildconf" >> APKBUILD
-              printf "%s\n" "    ./configure --host=armv7-alpine-linux-musleabihf --prefix=/usr --disable-sdl2-test" >> APKBUILD
-              printf "%s\n" "    make" >> APKBUILD
-              printf "%s\n" "}" >> APKBUILD
-              printf "%s\n" "" >> APKBUILD
-              printf "%s\n" "package() {" >> APKBUILD
-              
-              if [ "$IS_TAG" = "true" ]; then
+                printf "%s\n" "    ./buildconf" >> APKBUILD
+                printf "%s\n" "    ./configure --host=armv7-alpine-linux-musleabihf --prefix=/usr --disable-sdl2-test" >> APKBUILD
+                printf "%s\n" "    make" >> APKBUILD
+                printf "%s\n" "}" >> APKBUILD
+                printf "%s\n" "" >> APKBUILD
+                printf "%s\n" "package() {" >> APKBUILD
                 printf "%s\n" "    cd \"\$srcdir/\$pkgname-\$pkgver\"" >> APKBUILD
+                printf "%s\n" "    make DESTDIR=\"\$pkgdir\" install" >> APKBUILD
+                printf "%s\n" "}" >> APKBUILD
               else
+                printf "%s\n" "source=\"dosbox-x-src.tar.gz\"" >> APKBUILD
+                printf "%s\n" "" >> APKBUILD
+                printf "%s\n" "build() {" >> APKBUILD
                 printf "%s\n" "    cd \"\$srcdir/dosbox-x\"" >> APKBUILD
+                printf "%s\n" "    ./buildconf" >> APKBUILD
+                printf "%s\n" "    ./configure --host=armv7-alpine-linux-musleabihf --prefix=/usr --disable-sdl2-test" >> APKBUILD
+                printf "%s\n" "    make" >> APKBUILD
+                printf "%s\n" "}" >> APKBUILD
+                printf "%s\n" "" >> APKBUILD
+                printf "%s\n" "package() {" >> APKBUILD
+                printf "%s\n" "    cd \"\$srcdir/dosbox-x\"" >> APKBUILD
+                printf "%s\n" "    make DESTDIR=\"\$pkgdir\" install" >> APKBUILD
+                printf "%s\n" "}" >> APKBUILD
               fi
               
-              printf "%s\n" "    make DESTDIR=\"\$pkgdir\" install" >> APKBUILD
-              printf "%s\n" "}" >> APKBUILD
-              
-              # 对于开发版本，创建源码 tarball
+              # 开发版本：创建源码 tarball
               if [ "$IS_TAG" = "false" ]; then
                 echo "=== Creating source tarball for dev build ==="
                 cd /workspace
-                tar -czf dosbox-x-.tar.gz --exclude=".git" --exclude=".github" --exclude="release" .
-                ls -la dosbox-x-.tar.gz
+                tar -czf /tmp/dosbox-x-src.tar.gz \
+                  --exclude=".git" \
+                  --exclude=".github" \
+                  --exclude="release" \
+                  --exclude="*.apk" \
+                  --exclude="*.tar.gz" \
+                  .
+                cp /tmp/dosbox-x-src.tar.gz /workspace/
+                ls -la /workspace/dosbox-x-src.tar.gz
               fi
               
               echo "=== APKBUILD Content ==="
               cat APKBUILD
               
-              # 生成 checksums
               echo "=== Generating checksums ==="
               abuild checksum
               cat checksums

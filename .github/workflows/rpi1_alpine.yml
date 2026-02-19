@@ -20,69 +20,59 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Register QEMU for ARMv6 (Critical Fix)
-        # 主人，这里显式运行 qemu-user-static 来注册 binfmt，比 Action 更可靠
-        run: |
-          docker run --privileged --rm multiarch/qemu-user-static --reset -p yes
+      - name: Set up QEMU (Official Action)
+        # 主人，这是官方动作，通常最可靠
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
 
-      - name: Build in Alpine Environment
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Diagnose QEMU Registration (Critical)
+        # 主人，这一步非常关键，用于确认 QEMU 是否真的注册成功了
+        run: |
+          echo "Checking binfmt_misc..."
+          ls -l /proc/sys/fs/binfmt_misc/
+          if [ ! -f /proc/sys/fs/binfmt_misc/qemu-arm ]; then
+            echo "ERROR: QEMU ARM interpreter not found!"
+            echo "GitHub Actions runner does not support ARM emulation."
+            exit 1
+          else
+            echo "SUCCESS: QEMU ARM interpreter found."
+            cat /proc/sys/fs/binfmt_misc/qemu-arm
+          fi
+
+      - name: Build using Docker Buildx
+        # 主人，使用 buildx 通常比 docker run 更稳定
         run: |
           IMAGE="alpine:3.13"
           
-          docker run --rm --privileged --platform linux/arm/v6 \
-            -v ${{ github.workspace }}:/src -w /src $IMAGE sh -c "
-            set -e
-            
-            echo '=========================================='
-            echo 'Step 1: Fixing EOL Repositories'
-            echo '=========================================='
-            sed -i 's/dl-cdn.alpinelinux.org\/alpine\/v3.13/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.13/g' /etc/apk/repositories
-            apk update
-            
-            echo '=========================================='
-            echo 'Step 2: Verifying Container Architecture'
-            echo '=========================================='
-            ARCH=\$(uname -m)
-            echo \"Detected Architecture: \$ARCH\"
-            
-            # 严格检查：必须是 armv6l
-            if [[ \"\$ARCH\" == *"armv6"* ]]; then
-              echo \"SUCCESS: True ARMv6 detected.\"
-            else
-              echo \"WARNING: Architecture is \$ARCH, not armv6l!\"
-              echo \"This binary may NOT run on Raspberry Pi Model A.\"
-              # 这里我们不退出，让您看到结果，但建议您看到 armv7l 后切换 Debian
-            fi
-            
-            echo '=========================================='
-            echo 'Step 3: Installing Build Dependencies'
-            echo '=========================================='
-            apk add --no-cache \
-              git g++ make cmake pkgconf \
-              sdl2-dev libpng-dev libjpeg-turbo-dev \
-              libogg-dev libvorbis-dev opusfile-dev flac-dev \
-              alsa-lib-dev ncurses-dev readline-dev zlib-dev \
-              linux-headers musl-dev autoconf automake libtool nasm
-            
-            echo '=========================================='
-            echo 'Step 4: Configuring DOSBox-X'
-            echo '=========================================='
-            ./buildconf
-            ./configure --host=armv6-alpine-linux-musleabihf \
-              --prefix=/usr/local \
-              --disable-sdl2-test \
-              --disable-opengl
-            
-            echo '=========================================='
-            echo 'Step 5: Compiling (Single Thread)'
-            echo '=========================================='
-            make -j1
-            
-            echo '=========================================='
-            echo 'Step 6: Installing to Package Dir'
-            echo '=========================================='
-            make install DESTDIR=/pkg
-          "
+          # 创建一个临时 Dockerfile 用于构建
+          cat <<EOF > Dockerfile.build
+          FROM ${IMAGE}
+          RUN sed -i 's/dl-cdn.alpinelinux.org\/alpine\/v3.13/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.13/g' /etc/apk/repositories
+          RUN apk update && apk add --no-cache \
+            git g++ make cmake pkgconf \
+            sdl2-dev libpng-dev libjpeg-turbo-dev \
+            libogg-dev libvorbis-dev opusfile-dev flac-dev \
+            alsa-lib-dev ncurses-dev readline-dev zlib-dev \
+            linux-headers musl-dev autoconf automake libtool nasm
+          WORKDIR /src
+          COPY . .
+          RUN ./buildconf && \
+              ./configure --host=armv6-alpine-linux-musleabihf --prefix=/usr/local --disable-sdl2-test --disable-opengl && \
+              make -j1 && \
+              make install DESTDIR=/pkg
+          EOF
+          
+          # 构建镜像
+          docker buildx build --platform linux/arm/v6 --load -t dosbox-x-build .
+          
+          # 从镜像中复制产物
+          docker create --name temp-container dosbox-x-build
+          docker cp temp-container:/pkg ./pkg
+          docker rm temp-container
 
       - name: Create Runtime Dependency Script
         run: |
@@ -111,7 +101,7 @@ jobs:
 
       - name: Package Artifacts
         run: |
-          tar -czvf dosbox-x-alpine-armv6.tar.gz -C /pkg .
+          tar -czvf dosbox-x-alpine-armv6.tar.gz -C ./pkg .
           tar -rvf dosbox-x-alpine-armv6.tar.gz install_deps.sh
           echo "Package size:"
           ls -lh dosbox-x-alpine-armv6.tar.gz

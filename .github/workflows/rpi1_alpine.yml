@@ -1,4 +1,4 @@
-name: Build DOSBox-X for Alpine ARMv6 (3.13)
+name: Build DOSBox-X for Alpine ARMv6 (3.12)
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up QEMU (Official Action)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm
@@ -28,23 +28,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Diagnose QEMU Registration (Critical)
-        run: |
-          echo "Checking binfmt_misc..."
-          ls -l /proc/sys/fs/binfmt_misc/
-          if [ ! -f /proc/sys/fs/binfmt_misc/qemu-arm ]; then
-            echo "WARNING: QEMU ARM interpreter not found in binfmt_misc!"
-            echo "Build might fail with exec format error."
-          else
-            echo "SUCCESS: QEMU ARM interpreter found."
-          fi
-
       - name: Prepare Dockerfile
         run: |
-          # 主人，这里直接命名为 Dockerfile，避免找不到文件的错误
           cat <<EOF > Dockerfile
-          FROM alpine:3.13
-          RUN sed -i 's/dl-cdn.alpinelinux.org\/alpine\/v3.13/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.13/g' /etc/apk/repositories
+          FROM alpine:3.12
+          # 主人，注意这里：3.12 已 EOL，需指向 archive 源，且使用 http 协议
+          RUN sed -i 's/http:\/\/dl-cdn.alpinelinux.org\/alpine\/v3.12/http:\/\/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.12/g' /etc/apk/repositories
           RUN apk update && apk add --no-cache \
             git g++ make cmake pkgconf \
             sdl2-dev libpng-dev libjpeg-turbo-dev \
@@ -63,7 +52,6 @@ jobs:
 
       - name: Build using Docker Buildx
         run: |
-          # 主人，这里显式指定 -f Dockerfile 虽然默认也是它，但显式更清晰
           docker buildx build --platform linux/arm/v6 --load -t dosbox-x-build -f Dockerfile .
           
           # 提取产物
@@ -80,9 +68,10 @@ jobs:
           #!/bin/sh
           echo "=========================================="
           echo "DOSBox-X Runtime Dependency Installer"
-          echo "Target: Alpine 3.13 ARMv6"
+          echo "Target: Alpine 3.12 ARMv6 (Last Supported)"
           echo "=========================================="
-          sed -i 's/dl-cdn.alpinelinux.org\/alpine\/v3.13/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.13/g' /etc/apk/repositories
+          # 用户端也需要修复源
+          sed -i 's/http:\/\/dl-cdn.alpinelinux.org\/alpine\/v3.12/http:\/\/dl-cdn.alpinelinux.org\/alpine\/archive\/v3.12/g' /etc/apk/repositories
           apk update
           echo "Installing runtime libraries..."
           apk add --no-cache \

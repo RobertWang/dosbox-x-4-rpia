@@ -21,22 +21,91 @@ jobs:
           submodules: recursive
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        # uses: docker/setup-qemu-action@v3
+        uses: tonistiigi/binfmt@latest
         with:
           platforms: arm/v6
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Verify Architecture (Critical Step)
-        # 主人，这里我们使用 alpine:3.23.3 以确保官方 ARMv6 支持
-        # 如果您坚持使用 3.23.3，请在此处修改镜像名
         run: |
-          echo "Checking architecture of alpine:3.23.3..."
+          echo "Checking architecture of alpine:3.13 (Last official ARMv6 support)..."
+          # 这里强制使用 3.13，不再尝试 3.23.3
           ARCH=$(docker run --rm --platform linux/arm/v6 alpine:3.23.3 uname -m)
           echo "Detected Architecture: $ARCH"
           if [[ "$ARCH" != *"armv6"* ]]; then
-            echo "Error: Architecture is not ARMv6!"
+            echo "Error: Architecture is not ARMv6! Got: $ARCH"
             exit 1
           fi
-       
+        continue-on-error: false
+
+      - name: Build in Alpine Environment
+        run: |
+          IMAGE="alpine:3.23.3"
+          
+          docker run --rm --privileged --platform linux/arm/v6 \
+            -v ${{ github.workspace }}:/src -w /src $IMAGE sh -c "
+            set -e
+            echo 'Installing build dependencies...'
+            # 3.13 的包名可能略有不同，如果报错我们再调整
+            apk add --no-cache \
+              git g++ make cmake pkgconf \
+              sdl2-dev libpng-dev libjpeg-turbo-dev \
+              libogg-dev libvorbis-dev opusfile-dev flac-dev \
+              alsa-lib-dev ncurses-dev readline-dev zlib-dev \
+              linux-headers musl-dev autoconf automake libtool nasm
+            
+            echo 'Configuring...'
+            ./buildconf
+            ./configure --host=armv6-alpine-linux-musleabihf \
+              --prefix=/usr/local \
+              --disable-sdl2-test \
+              --disable-opengl
+            
+            echo 'Compiling (Single Thread)...'
+            make -j1
+            
+            echo 'Installing to pkg...'
+            make install DESTDIR=/pkg
+          "
+
+      - name: Create Runtime Dependency Script
+        run: |
+          cat <<EOF > install_deps.sh
+          #!/bin/sh
+          echo "=========================================="
+          echo "DOSBox-X Runtime Dependency Installer"
+          echo "Target: Alpine 3.23.3 ARMv6"
+          echo "=========================================="
+          apk update
+          apk add --no-cache \
+            sdl2 libpng libjpeg-turbo \
+            libogg libvorbis opusfile flac \
+            alsa-lib ncurses-libs readline zlib \
+            musl
+          echo ""
+          echo "Installation Complete."
+          echo "Please run: export PATH=\$PATH:/usr/local/bin"
+          echo "Then run: dosbox-x"
+          echo "=========================================="
+          EOF
+          chmod +x install_deps.sh
+
+      - name: Package Artifacts
+        run: |
+          tar -czvf dosbox-x-alpine-armv6.tar.gz -C /pkg .
+          tar -rvf dosbox-x-alpine-armv6.tar.gz install_deps.sh
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dosbox-x-alpine-armv6.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload Artifact for Manual Dispatch
+        uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: dosbox-x-dev-build
+          path: dosbox-x-alpine-armv6.tar.gz

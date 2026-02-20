@@ -48,30 +48,41 @@ jobs:
             -e DEBUG_ENABLED="$DEBUG_ENABLED" \
             -e PKGVER="$PKGVER" \
             -e IS_TAG="$IS_TAG" \
-            "alpine:$ALPINE_VER" \
+            "alpine:${ALPINE_VER}" \
             /bin/sh -c '
               set -e
               
-              echo "=== Workspace Files ==="
-              ls -la /workspace
-              
+              echo "=== Installing dependencies ==="
               apk add --no-cache abuild build-base bash autoconf automake libtool \
                 sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev \
-                file git ca-certificates openssl
+                file git ca-certificates openssl su-exec
               
-              mkdir -p ~/.abuild
-              cp /etc/apk/keys/*.rsa.pub ~/.abuild/ 2>/dev/null || true
+              echo "=== Creating non-root user for abuild ==="
+              addgroup -S abuild
+              adduser -S -G abuild -h /home/abuild -s /bin/sh abuild
+              mkdir -p /home/abuild
+              chown -R abuild:abuild /home/abuild
               
-              echo "CARCH=armhf" >> ~/.abuild/abuild.conf
-              echo "CHOST=armv7-alpine-linux-musleabihf" >> ~/.abuild/abuild.conf
-              echo "PACKAGER_PRIVKEY=/workspace/apkkey" >> ~/.abuild/abuild.conf
+              echo "=== Setting up abuild environment ==="
+              mkdir -p /home/abuild/.abuild
+              cp /etc/apk/keys/*.rsa.pub /home/abuild/.abuild/ 2>/dev/null || true
               
-              abuild-keygen -a -n
+              echo "CARCH=armhf" >> /home/abuild/.abuild/abuild.conf
+              echo "CHOST=armv7-alpine-linux-musleabihf" >> /home/abuild/.abuild/abuild.conf
+              echo "PACKAGER_PRIVKEY=/home/abuild/apkkey" >> /home/abuild/.abuild/abuild.conf
               
-              cd /workspace
+              chown -R abuild:abuild /home/abuild/.abuild
               
-              # 使用 printf 生成 APKBUILD (避免 heredoc)
-              printf "%s\n" "# Maintainer: 主人" > APKBUILD
+              echo "=== Generating signing key ==="
+              su-exec abuild abuild-keygen -a -n
+              
+              echo "=== Preparing workspace ==="
+              cp -r /workspace /home/abuild/workspace
+              chown -R abuild:abuild /home/abuild/workspace
+              cd /home/abuild/workspace
+              
+              echo "=== Generating APKBUILD ==="
+              printf "%s\n" "# Maintainer: Owner" > APKBUILD
               printf "%s\n" "pkgname=dosbox-x" >> APKBUILD
               printf "%s\n" "pkgver=${PKGVER}" >> APKBUILD
               printf "%s\n" "pkgrel=1" >> APKBUILD
@@ -83,7 +94,6 @@ jobs:
               printf "%s\n" "makedepends=\"build-base sdl2-dev sdl2_net-dev libpng-dev freetype-dev zlib-dev autoconf automake libtool git\"" >> APKBUILD
               printf "%s\n" "options=\"!check\"" >> APKBUILD
               
-              # 根据构建类型设置 source
               if [ "$IS_TAG" = "true" ]; then
                 printf "%s\n" "source=\"\$pkgname-\$pkgver.tar.gz::https://github.com/RobertWang/dosbox-x-4-rpia/archive/refs/tags/v\$pkgver.tar.gz\"" >> APKBUILD
                 printf "%s\n" "" >> APKBUILD
@@ -114,10 +124,8 @@ jobs:
                 printf "%s\n" "}" >> APKBUILD
               fi
               
-              # 开发版本：创建源码 tarball
               if [ "$IS_TAG" = "false" ]; then
-                echo "=== Creating source tarball for dev build ==="
-                cd /workspace
+                echo "=== Creating source tarball ==="
                 tar -czf /tmp/dosbox-x-src.tar.gz \
                   --exclude=".git" \
                   --exclude=".github" \
@@ -125,39 +133,38 @@ jobs:
                   --exclude="*.apk" \
                   --exclude="*.tar.gz" \
                   .
-                cp /tmp/dosbox-x-src.tar.gz /workspace/
-                ls -la /workspace/dosbox-x-src.tar.gz
+                cp /tmp/dosbox-x-src.tar.gz /home/abuild/workspace/
+                chown abuild:abuild /home/abuild/workspace/dosbox-x-src.tar.gz
               fi
               
               echo "=== APKBUILD Content ==="
               cat APKBUILD
               
               echo "=== Generating checksums ==="
-              abuild checksum
+              su-exec abuild abuild checksum
               cat checksums
               
               if [ "$DEBUG_ENABLED" = "true" ]; then
-                echo "Enabling debug mode..."
+                echo "=== Enabling debug mode ==="
                 sed -i "s|--disable-sdl2-test|--disable-sdl2-test --enable-debug|" APKBUILD
               fi
               
               echo "=== Starting abuild ==="
-              abuild -F -r
+              su-exec abuild abuild -F -r
               
               echo "=== Searching for APK files ==="
-              find /root/packages -name "*.apk" 2>/dev/null || true
-              find ~/packages -name "*.apk" 2>/dev/null || true
+              find /home/abuild/packages -name "*.apk" 2>/dev/null || true
               
               mkdir -p /workspace/release
-              if [ -d ~/packages/armhf ]; then
-                cp ~/packages/armhf/*.apk /workspace/release/
-                echo "Copied from ~/packages/armhf/"
-              elif [ -d ~/packages ]; then
-                cp ~/packages/*.apk /workspace/release/ 2>/dev/null || true
-                echo "Copied from ~/packages/"
+              if [ -d /home/abuild/packages/armhf ]; then
+                cp /home/abuild/packages/armhf/*.apk /workspace/release/
+                echo "Copied from /home/abuild/packages/armhf/"
+              elif [ -d /home/abuild/packages ]; then
+                cp /home/abuild/packages/*.apk /workspace/release/ 2>/dev/null || true
+                echo "Copied from /home/abuild/packages/"
               else
                 echo "WARNING: No packages directory found!"
-                find ~ -name "*.apk" 2>/dev/null || true
+                find /home/abuild -name "*.apk" 2>/dev/null || true
               fi
               
               DEPS=$(grep "^depends=" APKBUILD | cut -d"\"" -f2 | tr " " "\n" | grep -v "^$" | sed "s/^/apk add --no-cache /" | tr "\n" ";" )
